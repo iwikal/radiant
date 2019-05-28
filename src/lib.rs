@@ -174,9 +174,20 @@ fn decrunch<R: Read>(mut r: R, len: usize) -> LoadResult<Vec<RGBE>> {
 
 #[derive(Debug)]
 pub struct Image {
-    pub width: i32,
-    pub height: i32,
+    pub width: usize,
+    pub height: usize,
     pub data: Vec<RGB>,
+}
+
+impl Image {
+    pub fn pixel_offset(&self, x: usize, y: usize) -> usize {
+        self.width * y + x
+    }
+
+    pub fn pixel(&self, x: usize, y: usize) -> &RGB {
+        let offset = self.pixel_offset(x, y);
+        &self.data[offset]
+    }
 }
 
 pub fn load<R: Read>(mut r: R) -> LoadResult<Image> {
@@ -222,7 +233,7 @@ pub fn load<R: Read>(mut r: R) -> LoadResult<Image> {
             return Err(LoadError::FileFormat);
         }
         let h = i.next()
-            .and_then(|x| x.parse::<i32>().ok())
+            .and_then(|x| x.parse::<usize>().ok())
             .ok_or(LoadError::FileFormat)?;
 
         let marker = i.next().ok_or(LoadError::FileFormat)?;
@@ -230,7 +241,7 @@ pub fn load<R: Read>(mut r: R) -> LoadResult<Image> {
             return Err(LoadError::FileFormat);
         }
         let w = i.next()
-            .and_then(|x| x.parse::<i32>().ok())
+            .and_then(|x| x.parse::<usize>().ok())
             .ok_or(LoadError::FileFormat)?;
 
         (w, h)
