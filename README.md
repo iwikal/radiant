@@ -26,6 +26,7 @@ And then, in your rust file:
 fn main() {
     // ...
     let f = File::open("foo.hdr").expect("Failed to open specified file");
+    let f = BufReader::new(f);
     let image = radiant::load(f).expect("Failed to load image data");
     // Use your image data
     // ...
