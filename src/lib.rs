@@ -68,7 +68,7 @@ impl From<IoError> for LoadError {
     }
 }
 
-pub type LoadResult<T> = Result<T, LoadError>;
+pub type LoadResult<T = ()> = Result<T, LoadError>;
 
 trait ReadByte {
     fn read_byte(&mut self) -> std::io::Result<u8>;
@@ -83,25 +83,29 @@ impl<R: BufRead> ReadByte for R {
     }
 }
 
-fn old_decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult<()> {
-    let mut index = 0;
+fn old_decrunch<R: BufRead>(mut reader: R, mut scanline: &mut [RGB]) -> LoadResult {
     let mut r_shift = 0;
 
-    while index < scanline.len() {
+    while scanline.len() > 1 {
         let mut rgbe = [0u8; 4];
-        reader.read_exact(&mut rgbe[..])?;
+        reader.read_exact(&mut rgbe)?;
         let rgbe = RGBE::from(rgbe);
         if rgbe.is_rle_marker() {
             let count = usize::from(rgbe.e) << r_shift;
-            let val = *scanline.get(index - 1).ok_or(LoadError::Rle)?;
-            for _ in 0..count {
-                scanline[index] = val;
+            if count >= scanline.len() {
+                return Err(LoadError::Rle);
             }
-            index += count;
+
+            let from = scanline[0];
+            for to in &mut scanline[1..=count] {
+                *to = from;
+            }
+
+            scanline = &mut scanline[count..];
             r_shift += 8;
         } else {
-            scanline[index] = rgbe.into();
-            index += 1;
+            scanline[1] = rgbe.into();
+            scanline = &mut scanline[1..];
             r_shift = 0;
         }
     }
@@ -109,7 +113,7 @@ fn old_decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult<(
     Ok(())
 }
 
-fn decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult<()> {
+fn decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult {
     const MIN_LEN: usize = 8;
     const MAX_LEN: usize = 0x7fff;
 
@@ -137,13 +141,13 @@ fn decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult<()> {
         first.b = b as f32;
         first.apply_exposure(e);
 
-        return old_decrunch(reader, &mut scanline[1..]);
+        return old_decrunch(reader, scanline);
     }
 
     for element_index in 0..4 {
         let mut pixel_index = 0;
         while pixel_index < scanline.len() {
-            let mut write = |val: u8| -> LoadResult<()> {
+            let mut write = |val: u8| -> LoadResult {
                 let pixel = scanline.get_mut(pixel_index).ok_or(LoadError::Rle)?;
                 match element_index {
                     0 => pixel.r = val as f32,
@@ -206,7 +210,7 @@ impl Image {
 const MAGIC: &[u8; 10] = b"#?RADIANCE";
 const EOL: u8 = 0xA;
 
-pub fn load<R: BufRead>(mut reader: R) -> Result<Image, LoadError> {
+pub fn load<R: BufRead>(mut reader: R) -> LoadResult<Image> {
     let mut buf = [0u8; MAGIC.len() + 1];
     reader.read_exact(&mut buf[..])?;
 
@@ -256,17 +260,17 @@ struct DimParser<R> {
 }
 
 impl<R: BufRead> DimParser<R> {
-    fn new(mut reader: R) -> Result<Self, LoadError> {
+    fn new(mut reader: R) -> LoadResult<Self> {
         let byte = reader.read_byte()?;
         Ok(Self { reader, byte })
     }
 
-    fn eat(&mut self) -> Result<u8, LoadError> {
+    fn eat(&mut self) -> LoadResult<u8> {
         self.byte = self.reader.read_byte()?;
         Ok(self.byte)
     }
 
-    fn eat_whitespace(&mut self) -> Result<(), LoadError> {
+    fn eat_whitespace(&mut self) -> LoadResult {
         loop {
             if self.byte == EOL {
                 return Err(LoadError::FileFormat);
@@ -280,7 +284,7 @@ impl<R: BufRead> DimParser<R> {
         Ok(())
     }
 
-    fn expect_whitespace(&mut self) -> Result<(), LoadError> {
+    fn expect_whitespace(&mut self) -> LoadResult {
         if self.byte.is_ascii_whitespace() {
             self.eat_whitespace()
         } else {
@@ -288,7 +292,7 @@ impl<R: BufRead> DimParser<R> {
         }
     }
 
-    fn expect_usize(&mut self) -> Result<usize, LoadError> {
+    fn expect_usize(&mut self) -> LoadResult<usize> {
         let mut value = 0;
         if !self.byte.is_ascii_digit() {
             return Err(LoadError::FileFormat);
@@ -302,7 +306,7 @@ impl<R: BufRead> DimParser<R> {
         }
     }
 
-    fn expect(&mut self, byte: u8) -> Result<(), LoadError> {
+    fn expect(&mut self, byte: u8) -> LoadResult {
         match self.byte == byte {
             true => {
                 self.eat()?;
@@ -314,28 +318,28 @@ impl<R: BufRead> DimParser<R> {
         }
     }
 
-    fn expect_y(&mut self) -> Result<usize, LoadError> {
+    fn expect_y(&mut self) -> LoadResult<usize> {
         self.expect(b'-')?;
         self.expect(b'Y')?;
         self.expect_whitespace()?;
         self.expect_usize()
     }
 
-    fn expect_x(&mut self) -> Result<usize, LoadError> {
+    fn expect_x(&mut self) -> LoadResult<usize> {
         self.expect(b'+')?;
         self.expect(b'X')?;
         self.expect_whitespace()?;
         self.expect_usize()
     }
 
-    fn expect_eol(&mut self) -> Result<(), LoadError> {
+    fn expect_eol(&mut self) -> LoadResult {
         match self.byte {
             EOL => Ok(()),
             _ => Err(LoadError::FileFormat),
         }
     }
 
-    fn parse_impl(mut self) -> Result<(usize, usize, R), LoadError> {
+    fn parse_impl(mut self) -> LoadResult<(usize, usize, R)> {
         self.eat_whitespace()?;
         let y = self.expect_y()?;
         self.expect_whitespace()?;
@@ -352,7 +356,7 @@ impl<R: BufRead> DimParser<R> {
         Ok((x, y, self.reader))
     }
 
-    fn parse(reader: R) -> Result<(usize, usize, R), LoadError> {
+    fn parse(reader: R) -> LoadResult<(usize, usize, R)> {
         Self::new(reader)?.parse_impl()
     }
 }
