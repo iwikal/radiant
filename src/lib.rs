@@ -23,21 +23,21 @@
 //!
 //! And then, in your rust file:
 //! ```rust
-//! fn main() {
-//!     // ...
-//!     let f = File::open("foo.hdr").expect("Failed to open specified file");
-//!     let f = BufReader::new(f);
-//!     let image = radiant::load(f).expect("Failed to load image data");
-//!     // Use your image data
-//!     // ...
-//! }
+//! use std::io::BufReader;
+//! use std::fs::File;
+//!
+//! let f = File::open("assets/colorful_studio_2k.hdr").expect("Failed to open specified file");
+//! let f = BufReader::new(f);
+//! let image = radiant::load(f).expect("Failed to load image data");
 //! ```
 //!
 //! For more complete example, see
 //! [Simple HDR Viewer application](https://github.com/iwikal/radiant/blob/master/examples/view_hdr.rs)
+//!
+//! Huge thanks to [HDRI Haven](https://hdrihaven.com) for providing CC0 sample images for testing!
 
 // Original source: http://flipcode.com/archives/HDR_Image_Reader.shtml
-use std::io::{Error as IoError, ErrorKind, BufRead, Read};
+use std::io::{BufRead, Error as IoError, ErrorKind, Read};
 
 /// The decoded R, G, and B value of a pixel. You typically get these from the data field on an
 /// [`Image`].
@@ -370,9 +370,7 @@ impl<R: BufRead> DimParser<R> {
                 self.eat()?;
                 Ok(())
             }
-            false => {
-                Err(LoadError::FileFormat)
-            }
+            false => Err(LoadError::FileFormat),
         }
     }
 

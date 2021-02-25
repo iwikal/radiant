@@ -2,8 +2,8 @@
 
 extern crate test;
 
-use std::io::BufReader;
 use std::fs::File;
+use std::io::BufReader;
 
 use test::Bencher;
 
