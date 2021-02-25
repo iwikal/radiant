@@ -1,11 +1,23 @@
 // Original source: http://flipcode.com/archives/HDR_Image_Reader.shtml
-use std::io::{Read, Error as IoError};
+use std::io::{Error as IoError, BufRead, Read};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct RGB {
     pub r: f32,
     pub g: f32,
     pub b: f32,
+}
+
+impl RGB {
+    #[inline]
+    fn apply_exposure(&mut self, expo: u8) {
+        let expo = i32::from(expo) - 128;
+        let d = 2_f32.powi(expo) / 255_f32;
+
+        self.r *= d;
+        self.g *= d;
+        self.b *= d;
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -16,38 +28,31 @@ struct RGBE {
     pub e: u8,
 }
 
-impl std::convert::From<[u8;4]> for RGBE {
-    fn from(src: [u8;4]) -> Self {
-        Self {
-            r: src[0],
-            g: src[1],
-            b: src[2],
-            e: src[3],
-        }
+impl std::convert::From<RGBE> for RGB {
+    #[inline]
+    fn from(rgbe: RGBE) -> Self {
+        let mut rgb = Self {
+            r: rgbe.r as f32,
+            g: rgbe.g as f32,
+            b: rgbe.b as f32,
+        };
+        rgb.apply_exposure(rgbe.e);
+        rgb
+    }
+}
+
+impl std::convert::From<[u8; 4]> for RGBE {
+    #[inline]
+    fn from([r, g, b, e]: [u8; 4]) -> Self {
+        Self { r, g, b, e }
     }
 }
 
 impl RGBE {
+    #[inline]
     pub fn is_rle_marker(&self) -> bool {
         self.r == 1 && self.g == 1 && self.b == 1
     }
-}
-
-fn process_rgbe(data: &[RGBE]) -> Vec<RGB> {
-    data.iter().map(|rgbe| {
-        let expo = i32::from(rgbe.e) - 128;
-        let d = 2f32.powi(expo);
-
-        let convert_component = |x: u8| {
-            let v = f32::from(x) / 255f32;
-            d * v
-        };
-
-        let r = convert_component(rgbe.r);
-        let g = convert_component(rgbe.g);
-        let b = convert_component(rgbe.b);
-        RGB{r, g, b}
-    }).collect()
 }
 
 #[derive(Debug)]
@@ -57,9 +62,9 @@ pub enum LoadError {
     Rle,
 }
 
-impl std::convert::From<IoError> for LoadError {
+impl From<IoError> for LoadError {
     fn from(e: IoError) -> Self {
-        LoadError::Io(e)
+        Self::Io(e)
     }
 }
 
@@ -69,7 +74,8 @@ trait ReadByte {
     fn read_byte(&mut self) -> std::io::Result<u8>;
 }
 
-impl<R: Read> ReadByte for R {
+impl<R: BufRead> ReadByte for R {
+    #[inline]
     fn read_byte(&mut self) -> std::io::Result<u8> {
         let mut buf = [0u8];
         self.read_exact(&mut buf)?;
@@ -77,99 +83,106 @@ impl<R: Read> ReadByte for R {
     }
 }
 
-fn old_decrunch<R: Read>(mut r: R, len: usize) -> LoadResult<Vec<RGBE>> {
-    let mut result = Vec::<RGBE>::with_capacity(len);
+fn old_decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult<()> {
+    let mut index = 0;
     let mut r_shift = 0;
-    let mut left = len;
-    while left > 0 {
+
+    while index < scanline.len() {
         let mut rgbe = [0u8; 4];
-        r.read_exact(&mut rgbe[..])?;
+        reader.read_exact(&mut rgbe[..])?;
         let rgbe = RGBE::from(rgbe);
         if rgbe.is_rle_marker() {
-            let count = i32::from(rgbe.e) << r_shift;
-            let val = result.last().ok_or(LoadError::Rle)?.clone();
-
-            for _ in 0 .. count {
-                result.push(val.clone());
+            let count = usize::from(rgbe.e) << r_shift;
+            let val = *scanline.get(index - 1).ok_or(LoadError::Rle)?;
+            for _ in 0..count {
+                scanline[index] = val;
             }
-            left -= count as usize;
+            index += count;
             r_shift += 8;
         } else {
-            result.push(rgbe);
-            left -= 1;
+            scanline[index] = rgbe.into();
+            index += 1;
             r_shift = 0;
         }
     }
-    Ok(result)
+
+    Ok(())
 }
 
-#[allow(clippy::many_single_char_names)]
-fn decrunch<R: Read>(mut r: R, len: usize) -> LoadResult<Vec<RGBE>> {
+fn decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult<()> {
     const MIN_LEN: usize = 8;
     const MAX_LEN: usize = 0x7fff;
 
-    if len < MIN_LEN || len > MAX_LEN {
-        return old_decrunch(r, len);
+    if scanline.len() < MIN_LEN || scanline.len() > MAX_LEN {
+        return old_decrunch(reader, scanline);
     }
 
-    let i = r.read_byte()?;
-    if i != 2 {
-        let slice = &[i];
+    let r = reader.read_byte()?;
+    if r != 2 {
+        let slice = &[r];
         let c = std::io::Cursor::new(slice);
-        return old_decrunch(c.chain(r), len);
+        return old_decrunch(c.chain(reader), scanline);
     }
 
-    let g = r.read_byte()?;
-    let b = r.read_byte()?;
-    let i = r.read_byte()?;
-    if g != 2 || b & 128 != 0 {
-        let a = RGBE{ r: 2, g, b, e: i };
-        let b = old_decrunch(r, len - 1)?;
-        return Ok([a].iter().cloned().chain(b.into_iter()).collect());
-    }
-
-    let buf_len = len * 4;
-    let mut buf = vec![0u8; buf_len];
-    let buf_offset = |e, p| {
-        p * 4 + e
+    let [g, b, e] = {
+        let mut buf = [0; 3];
+        reader.read_exact(&mut buf)?;
+        buf
     };
-    
-    for element_index in 0 .. 4 {
-        let mut pixel_index = 0;
-        while pixel_index < len {
-            let code = r.read_byte()?;
-            if code > 128 { // run
-                let run_len = code & 127;
-                let val = r.read_byte()?;
-                for _ in 0 .. run_len {
-                    let offset = buf_offset(element_index, pixel_index);
-                    if offset >= buf.len() {
-                        return Err(LoadError::Rle);
-                    }
 
-                    buf[offset] = val;
-                    pixel_index += 1;
+    if g != 2 || b & 128 != 0 {
+        let first = &mut scanline[0];
+        first.r = 2.0;
+        first.g = g as f32;
+        first.b = b as f32;
+        first.apply_exposure(e);
+
+        return old_decrunch(reader, &mut scanline[1..]);
+    }
+
+    for element_index in 0..4 {
+        let mut pixel_index = 0;
+        while pixel_index < scanline.len() {
+            let mut write = |val: u8| -> LoadResult<()> {
+                let pixel = scanline.get_mut(pixel_index).ok_or(LoadError::Rle)?;
+                match element_index {
+                    0 => pixel.r = val as f32,
+                    1 => pixel.g = val as f32,
+                    2 => pixel.b = val as f32,
+                    _ => pixel.apply_exposure(val),
                 }
-            } else { // non-run
-                let mut tmp = vec![0u8; code as usize];
-                r.read_exact(tmp.as_mut_slice())?;
-                for x in tmp {
-                    let offset = buf_offset(element_index, pixel_index);
-                    if offset >= buf.len() {
+                pixel_index += 1;
+                Ok(())
+            };
+
+            let code = reader.read_byte()?;
+            if code > 128 {
+                // run
+                let run_len = code & 127;
+                let val = reader.read_byte()?;
+                for _ in 0..run_len {
+                    write(val)?;
+                }
+            } else {
+                // non-run
+                let mut bytes_left = code as usize;
+                while bytes_left > 0 {
+                    let buf = reader.fill_buf()?;
+                    if buf.is_empty() {
                         return Err(LoadError::Rle);
                     }
-                                        
-                    buf[offset] = x;
-                    pixel_index += 1;
+                    let count = buf.len().min(bytes_left);
+                    for &val in &buf[..count] {
+                        write(val)?;
+                    }
+                    reader.consume(count);
+                    bytes_left -= count;
                 }
             }
         }
     }
 
-    let result = buf.chunks_exact(4).map(|x| {
-        RGBE{r: x[0], g: x[1], b: x[2], e: x[3]}
-    }).collect();
-    Ok(result)
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -190,78 +203,156 @@ impl Image {
     }
 }
 
-pub fn load<R: Read>(mut r: R) -> LoadResult<Image> {
-    const MAGIC: &[u8; 10] = b"#?RADIANCE";
-    const EOL: u8 = 0x0A;
-    let mut buf = [0u8; 11];    // use MAGIC.len() + 1 when const slice len gets stabilized
-    r.read_exact(&mut buf[..])?;
-    
+const MAGIC: &[u8; 10] = b"#?RADIANCE";
+const EOL: u8 = 0xA;
+
+pub fn load<R: BufRead>(mut reader: R) -> Result<Image, LoadError> {
+    let mut buf = [0u8; MAGIC.len() + 1];
+    reader.read_exact(&mut buf[..])?;
+
     if &buf[..MAGIC.len()] != MAGIC {
         return Err(LoadError::FileFormat);
     }
-    
-    // Skip the header
-    {
-        let mut old_c = 0u8;
 
-        loop {
-            let c = r.read_byte()?;
-            if c == EOL && old_c == EOL {
-                break;
-            }
-            old_c = c;
+    // Skip header
+    loop {
+        let mut eol = || reader.read_byte().map(|byte| byte == EOL);
+
+        if eol()? && eol()? {
+            break;
         }
     }
 
     // Grab image dimensions
-    let (w, h) = {
-        let mut buf = Vec::with_capacity(200);
+    let (width, height, mut reader) = DimParser::parse(reader)?;
 
-        loop {
-            let c = r.read_byte()?;
-            if c == EOL {
-                break;
-            }
-            buf.push(c);
-        }
+    // Allocate result buffer
+    let mut data = vec![
+        RGB {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+        };
+        width * height
+    ];
 
-        let buf = String::from_utf8_lossy(buf.as_slice());
-        let mut i = buf.split_ascii_whitespace();
-
-        let marker = i.next().ok_or(LoadError::FileFormat)?;
-        if marker != "-Y" {
-            return Err(LoadError::FileFormat);
-        }
-        let h = i.next()
-            .and_then(|x| x.parse::<usize>().ok())
-            .ok_or(LoadError::FileFormat)?;
-
-        let marker = i.next().ok_or(LoadError::FileFormat)?;
-        if marker != "+X" {
-            return Err(LoadError::FileFormat);
-        }
-        let w = i.next()
-            .and_then(|x| x.parse::<usize>().ok())
-            .ok_or(LoadError::FileFormat)?;
-
-        (w, h)
-    };
-
-    let len = w * h;
-    let mut data = Vec::with_capacity(len as usize);
-
-    for _ in 0 .. h {   // Should be flipped
-        let row_data = decrunch(r.by_ref(), w as usize)?;
-        let row_data = process_rgbe(row_data.as_slice());
-        data.extend(row_data);
+    // Decrunch image data
+    for row in 0..height {
+        let start = row * width;
+        let end = start + width;
+        decrunch(&mut reader, &mut data[start..end])?;
     }
 
-    let result = Image {
-        width: w,
-        height: h,
+    Ok(Image {
+        width,
+        height,
         data,
-    };
-
-    Ok(result)
+    })
 }
 
+struct DimParser<R> {
+    reader: R,
+    byte: u8,
+}
+
+impl<R: BufRead> DimParser<R> {
+    fn new(mut reader: R) -> Result<Self, LoadError> {
+        let byte = reader.read_byte()?;
+        Ok(Self { reader, byte })
+    }
+
+    fn eat(&mut self) -> Result<u8, LoadError> {
+        self.byte = self.reader.read_byte()?;
+        Ok(self.byte)
+    }
+
+    fn eat_whitespace(&mut self) -> Result<(), LoadError> {
+        loop {
+            if self.byte == EOL {
+                return Err(LoadError::FileFormat);
+            } else if self.byte.is_ascii_whitespace() {
+                self.byte = self.reader.read_byte()?;
+                continue;
+            } else {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    fn expect_whitespace(&mut self) -> Result<(), LoadError> {
+        if self.byte.is_ascii_whitespace() {
+            self.eat_whitespace()
+        } else {
+            Err(LoadError::FileFormat)
+        }
+    }
+
+    fn expect_usize(&mut self) -> Result<usize, LoadError> {
+        let mut value = 0;
+        if !self.byte.is_ascii_digit() {
+            return Err(LoadError::FileFormat);
+        }
+        loop {
+            value *= 10;
+            value += (self.byte - b'0') as usize;
+            if !self.eat()?.is_ascii_digit() {
+                return Ok(value);
+            }
+        }
+    }
+
+    fn expect(&mut self, byte: u8) -> Result<(), LoadError> {
+        match self.byte == byte {
+            true => {
+                self.eat()?;
+                Ok(())
+            }
+            false => {
+                Err(LoadError::FileFormat)
+            }
+        }
+    }
+
+    fn expect_y(&mut self) -> Result<usize, LoadError> {
+        self.expect(b'-')?;
+        self.expect(b'Y')?;
+        self.expect_whitespace()?;
+        self.expect_usize()
+    }
+
+    fn expect_x(&mut self) -> Result<usize, LoadError> {
+        self.expect(b'+')?;
+        self.expect(b'X')?;
+        self.expect_whitespace()?;
+        self.expect_usize()
+    }
+
+    fn expect_eol(&mut self) -> Result<(), LoadError> {
+        match self.byte {
+            EOL => Ok(()),
+            _ => Err(LoadError::FileFormat),
+        }
+    }
+
+    fn parse_impl(mut self) -> Result<(usize, usize, R), LoadError> {
+        self.eat_whitespace()?;
+        let y = self.expect_y()?;
+        self.expect_whitespace()?;
+        let x = self.expect_x()?;
+
+        while self.byte != EOL {
+            if !self.byte.is_ascii_whitespace() {
+                return Err(LoadError::FileFormat);
+            }
+            self.eat()?;
+        }
+
+        self.expect_eol()?;
+        Ok((x, y, self.reader))
+    }
+
+    fn parse(reader: R) -> Result<(usize, usize, R), LoadError> {
+        Self::new(reader)?.parse_impl()
+    }
+}

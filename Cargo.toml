@@ -12,4 +12,3 @@ edition = "2018"
 [dev-dependencies]
 structopt = "0.2"
 minifb = "0.11"
-
