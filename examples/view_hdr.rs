@@ -1,3 +1,4 @@
+use anyhow::*;
 use minifb::{Key, Window, WindowOptions};
 use std::fs::File;
 use std::io::BufReader;
@@ -16,11 +17,11 @@ fn map_channel(v: f32) -> u32 {
     u32::min(255, (2f32 * (v * COEFF)) as u32)
 }
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     let options = Options::from_args();
-    let f = File::open(&options.image_path).expect("Failed to open specified file");
+    let f = File::open(&options.image_path).context("Failed to open specified file")?;
     let f = BufReader::new(f);
-    let image = radiant::load(f).expect("Failed to load image data");
+    let image = radiant::load(f).context("Failed to load image data")?;
 
     let buf: Vec<_> = image
         .data
@@ -40,13 +41,15 @@ fn main() {
         image.height as usize,
         WindowOptions::default(),
     )
-    .expect("Failed to create window");
+    .context("Failed to create window")?;
 
     win.update_with_buffer(buf.as_slice())
-        .expect("Failed to render image");
+        .context("Failed to render image")?;
 
     while win.is_open() && !win.is_key_down(Key::Escape) {
         win.update();
         sleep(Duration::from_millis(10));
     }
+
+    Ok(())
 }

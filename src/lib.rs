@@ -1,7 +1,47 @@
-// Original source: http://flipcode.com/archives/HDR_Image_Reader.shtml
-use std::io::{Error as IoError, BufRead, Read};
+//! # Radiant
+//!
+//! Load Radiance HDR (.hdr, .pic) images.
+//!
+//! This is a fork of [TechPriest's HdrLdr](https://crates.io/crates/hdrldr),
+//! rewritten for slightly better performance. May or may not actually perform better.
+//! I've restricted the API so that it only accepts readers that implement
+//! `BufRead`.
+//!
+//! The original crate, which does not have this restriction, is in turn a slightly
+//! rustified version of [C++ code by Igor
+//! Kravtchenko](http://flipcode.com/archives/HDR_Image_Reader.shtml). If you need
+//! more image formats besides HDR, take a look at [Image2
+//! crate](https://crates.io/crates/image2).
+//!
+//! ## Example
+//!
+//! Add `radiant` to your dependencies of your `Cargo.toml`:
+//! ```toml
+//! [dependencies]
+//! radiant = "0.2"
+//! ```
+//!
+//! And then, in your rust file:
+//! ```rust
+//! fn main() {
+//!     // ...
+//!     let f = File::open("foo.hdr").expect("Failed to open specified file");
+//!     let f = BufReader::new(f);
+//!     let image = radiant::load(f).expect("Failed to load image data");
+//!     // Use your image data
+//!     // ...
+//! }
+//! ```
+//!
+//! For more complete example, see
+//! [Simple HDR Viewer application](https://github.com/iwikal/radiant/blob/master/examples/view_hdr.rs)
 
-#[derive(Debug, Clone, Copy)]
+// Original source: http://flipcode.com/archives/HDR_Image_Reader.shtml
+use std::io::{Error as IoError, ErrorKind, BufRead, Read};
+
+/// The decoded R, G, and B value of a pixel. You typically get these from the data field on an
+/// [`Image`].
+#[derive(Debug, Clone)]
 pub struct RGB {
     pub r: f32,
     pub g: f32,
@@ -22,10 +62,10 @@ impl RGB {
 
 #[derive(Debug, Clone)]
 struct RGBE {
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
-    pub e: u8,
+    r: u8,
+    g: u8,
+    b: u8,
+    e: u8,
 }
 
 impl std::convert::From<RGBE> for RGB {
@@ -50,24 +90,38 @@ impl std::convert::From<[u8; 4]> for RGBE {
 
 impl RGBE {
     #[inline]
-    pub fn is_rle_marker(&self) -> bool {
+    fn is_rle_marker(&self) -> bool {
         self.r == 1 && self.g == 1 && self.b == 1
     }
 }
 
-#[derive(Debug)]
+/// The various types of errors that can occur while loading an [`Image`].
+#[derive(thiserror::Error, Debug)]
 pub enum LoadError {
-    Io(IoError),
+    /// A lower level io error was raised.
+    #[error("io error: {0}")]
+    Io(#[source] IoError),
+    /// The image file ended unexpectedly.
+    #[error("file ended unexpectedly")]
+    Eof(#[source] IoError),
+    /// The file did not follow valid Radiance HDR format.
+    #[error("invalid file format")]
     FileFormat,
+    /// The image file contained invalid run-length encoding.
+    #[error("invalid run-length encoding")]
     Rle,
 }
 
 impl From<IoError> for LoadError {
-    fn from(e: IoError) -> Self {
-        Self::Io(e)
+    fn from(error: IoError) -> Self {
+        match error.kind() {
+            ErrorKind::UnexpectedEof => Self::Eof(error),
+            _ => Self::Io(error),
+        }
     }
 }
 
+/// An alias for the type of results this crate returns.
 pub type LoadResult<T = ()> = Result<T, LoadError>;
 
 trait ReadByte {
@@ -96,9 +150,9 @@ fn old_decrunch<R: BufRead>(mut reader: R, mut scanline: &mut [RGB]) -> LoadResu
                 return Err(LoadError::Rle);
             }
 
-            let from = scanline[0];
+            let from = scanline[0].clone();
             for to in &mut scanline[1..=count] {
-                *to = from;
+                *to = from.clone();
             }
 
             scanline = &mut scanline[count..];
@@ -189,6 +243,7 @@ fn decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult {
     Ok(())
 }
 
+/// A decoded Radiance HDR image.
 #[derive(Debug)]
 pub struct Image {
     pub width: usize,
@@ -197,10 +252,12 @@ pub struct Image {
 }
 
 impl Image {
+    /// Calculate an offset into the data buffer, given an x and y coordinate.
     pub fn pixel_offset(&self, x: usize, y: usize) -> usize {
         self.width * y + x
     }
 
+    /// Get a pixel at a specific x and y coordinate. Will panic if out of bounds.
     pub fn pixel(&self, x: usize, y: usize) -> &RGB {
         let offset = self.pixel_offset(x, y);
         &self.data[offset]
@@ -210,6 +267,7 @@ impl Image {
 const MAGIC: &[u8; 10] = b"#?RADIANCE";
 const EOL: u8 = 0xA;
 
+/// Load a Radiance HDR image from a reader that implements [`BufRead`].
 pub fn load<R: BufRead>(mut reader: R) -> LoadResult<Image> {
     let mut buf = [0u8; MAGIC.len() + 1];
     reader.read_exact(&mut buf[..])?;
