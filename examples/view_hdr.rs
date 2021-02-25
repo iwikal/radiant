@@ -20,7 +20,7 @@ fn main() {
     let options = Options::from_args();
     let f = File::open(&options.image_path).expect("Failed to open specified file");
     let f = BufReader::new(f);
-    let image = hdrldr::load(f).expect("Failed to load image data");
+    let image = radiant::load(f).expect("Failed to load image data");
 
     let buf: Vec<_> = image
         .data
