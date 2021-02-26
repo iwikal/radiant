@@ -34,16 +34,14 @@ fn main() -> anyhow::Result<()> {
         })
         .collect();
 
-    let title = format!("view_hdr: {}", options.image_path.to_string_lossy());
-    let mut win = Window::new(
-        &title,
-        image.width as usize,
-        image.height as usize,
-        WindowOptions::default(),
-    )
-    .context("Failed to create window")?;
+    let width = image.width as usize;
+    let height = image.height as usize;
 
-    win.update_with_buffer(buf.as_slice())
+    let title = format!("view_hdr: {}", options.image_path.to_string_lossy());
+    let mut win = Window::new(&title, width, height, WindowOptions::default())
+        .context("Failed to create window")?;
+
+    win.update_with_buffer(buf.as_slice(), width, height)
         .context("Failed to render image")?;
 
     while win.is_open() && !win.is_key_down(Key::Escape) {
