@@ -5,4 +5,3 @@ set -e
 cargo sync-readme --check
 cargo clippy -- -D warnings
 cargo fmt -- --check
-cargo test
