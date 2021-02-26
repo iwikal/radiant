@@ -144,29 +144,33 @@ impl<R: BufRead> ReadByte for R {
     }
 }
 
-fn old_decrunch<R: BufRead>(mut reader: R, mut scanline: &mut [RGB]) -> LoadResult {
+fn old_decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult {
+    let mut index = 0;
     let mut r_shift = 0;
 
-    while scanline.len() > 1 {
+    while index < scanline.len() {
         let mut rgbe = [0u8; 4];
         reader.read_exact(&mut rgbe)?;
         let rgbe = RGBE::from(rgbe);
         if rgbe.is_rle_marker() {
             let count = usize::from(rgbe.e) << r_shift;
-            if count >= scanline.len() {
+
+            if index == 0 {
                 return Err(LoadError::Rle);
             }
+            let from = scanline[index - 1].clone();
 
-            let from = scanline[0].clone();
-            for to in &mut scanline[1..=count] {
-                *to = from.clone();
-            }
+            scanline
+                .get_mut(index..(index + count))
+                .ok_or(LoadError::Rle)?
+                .iter_mut()
+                .for_each(|to| *to = from.clone());
 
-            scanline = &mut scanline[count..];
+            index += count;
             r_shift += 8;
         } else {
-            scanline[1] = rgbe.into();
-            scanline = &mut scanline[1..];
+            scanline[index] = rgbe.into();
+            index += 1;
             r_shift = 0;
         }
     }
@@ -196,13 +200,8 @@ fn decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult {
     };
 
     if g != 2 || b & 128 != 0 {
-        let first = &mut scanline[0];
-        first.r = 2.0;
-        first.g = g as f32;
-        first.b = b as f32;
-        first.apply_exposure(e);
-
-        return old_decrunch(reader, scanline);
+        scanline[0] = RGBE { r, g, b, e }.into();
+        return old_decrunch(reader, &mut scanline[1..]);
     }
 
     for element_index in 0..4 {

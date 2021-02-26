@@ -1,7 +1,7 @@
 [package]
 name = "radiant"
 description = "Radiance HDR loader in Rust"
-version = "0.2.0"
+version = "0.2.1"
 authors = [
   "TechPriest <yaminogakusei@gmail.com>",
   "iwikal <e.joel.nordstrom@gmail.com>",
