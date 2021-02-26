@@ -1,3 +1,5 @@
+#![warn(missing_docs)]
+
 //! # Radiant
 //!
 //! Load Radiance HDR (.hdr, .pic) images.
@@ -39,12 +41,17 @@
 // Original source: http://flipcode.com/archives/HDR_Image_Reader.shtml
 use std::io::{BufRead, Error as IoError, ErrorKind, Read};
 
+mod dim_parser;
+
 /// The decoded R, G, and B value of a pixel. You typically get these from the data field on an
 /// [`Image`].
 #[derive(Debug, Clone)]
 pub struct RGB {
+    /// The red channel.
     pub r: f32,
+    /// The green channel.
     pub g: f32,
+    /// The blue channel.
     pub b: f32,
 }
 
@@ -246,8 +253,11 @@ fn decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult {
 /// A decoded Radiance HDR image.
 #[derive(Debug)]
 pub struct Image {
+    /// The width of the image, in pixels.
     pub width: usize,
+    /// The height of the image, in pixels.
     pub height: usize,
+    /// The decoded image data.
     pub data: Vec<RGB>,
 }
 
@@ -265,7 +275,6 @@ impl Image {
 }
 
 const MAGIC: &[u8; 10] = b"#?RADIANCE";
-const EOL: u8 = 0xA;
 
 /// Load a Radiance HDR image from a reader that implements [`BufRead`].
 pub fn load<R: BufRead>(mut reader: R) -> LoadResult<Image> {
@@ -276,17 +285,8 @@ pub fn load<R: BufRead>(mut reader: R) -> LoadResult<Image> {
         return Err(LoadError::FileFormat);
     }
 
-    // Skip header
-    loop {
-        let mut eol = || reader.read_byte().map(|byte| byte == EOL);
-
-        if eol()? && eol()? {
-            break;
-        }
-    }
-
     // Grab image dimensions
-    let (width, height, mut reader) = DimParser::parse(reader)?;
+    let (width, height, mut reader) = dim_parser::parse_header(reader)?;
 
     // Allocate result buffer
     let mut data = vec![
@@ -310,109 +310,4 @@ pub fn load<R: BufRead>(mut reader: R) -> LoadResult<Image> {
         height,
         data,
     })
-}
-
-struct DimParser<R> {
-    reader: R,
-    byte: u8,
-}
-
-impl<R: BufRead> DimParser<R> {
-    fn new(mut reader: R) -> LoadResult<Self> {
-        let byte = reader.read_byte()?;
-        Ok(Self { reader, byte })
-    }
-
-    fn eat(&mut self) -> LoadResult<u8> {
-        self.byte = self.reader.read_byte()?;
-        Ok(self.byte)
-    }
-
-    fn eat_whitespace(&mut self) -> LoadResult {
-        loop {
-            if self.byte == EOL {
-                return Err(LoadError::FileFormat);
-            } else if self.byte.is_ascii_whitespace() {
-                self.byte = self.reader.read_byte()?;
-                continue;
-            } else {
-                break;
-            }
-        }
-        Ok(())
-    }
-
-    fn expect_whitespace(&mut self) -> LoadResult {
-        if self.byte.is_ascii_whitespace() {
-            self.eat_whitespace()
-        } else {
-            Err(LoadError::FileFormat)
-        }
-    }
-
-    fn expect_usize(&mut self) -> LoadResult<usize> {
-        let mut value = 0;
-        if !self.byte.is_ascii_digit() {
-            return Err(LoadError::FileFormat);
-        }
-        loop {
-            value *= 10;
-            value += (self.byte - b'0') as usize;
-            if !self.eat()?.is_ascii_digit() {
-                return Ok(value);
-            }
-        }
-    }
-
-    fn expect(&mut self, byte: u8) -> LoadResult {
-        match self.byte == byte {
-            true => {
-                self.eat()?;
-                Ok(())
-            }
-            false => Err(LoadError::FileFormat),
-        }
-    }
-
-    fn expect_y(&mut self) -> LoadResult<usize> {
-        self.expect(b'-')?;
-        self.expect(b'Y')?;
-        self.expect_whitespace()?;
-        self.expect_usize()
-    }
-
-    fn expect_x(&mut self) -> LoadResult<usize> {
-        self.expect(b'+')?;
-        self.expect(b'X')?;
-        self.expect_whitespace()?;
-        self.expect_usize()
-    }
-
-    fn expect_eol(&mut self) -> LoadResult {
-        match self.byte {
-            EOL => Ok(()),
-            _ => Err(LoadError::FileFormat),
-        }
-    }
-
-    fn parse_impl(mut self) -> LoadResult<(usize, usize, R)> {
-        self.eat_whitespace()?;
-        let y = self.expect_y()?;
-        self.expect_whitespace()?;
-        let x = self.expect_x()?;
-
-        while self.byte != EOL {
-            if !self.byte.is_ascii_whitespace() {
-                return Err(LoadError::FileFormat);
-            }
-            self.eat()?;
-        }
-
-        self.expect_eol()?;
-        Ok((x, y, self.reader))
-    }
-
-    fn parse(reader: R) -> LoadResult<(usize, usize, R)> {
-        Self::new(reader)?.parse_impl()
-    }
 }
