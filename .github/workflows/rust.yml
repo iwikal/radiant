@@ -21,9 +21,12 @@ jobs:
       run: cargo test --verbose
 
   housekeeping:
+    runs-on: ubuntu-latest
+
+    steps:
     - name: Install dependencies
       run: |
         cargo install --force cargo-sync-readme
         rustup component add rustfmt
     - name: Check housekeeping
-      run: .cargo-husky/hooks/pre-push
+      run: ./.cargo-husky/hooks/pre-push
