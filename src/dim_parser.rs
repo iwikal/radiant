@@ -94,12 +94,12 @@ impl<R: BufRead> DimParser<R> {
     }
 
     fn expect_usize(&mut self) -> LoadResult<usize> {
-        let mut value = 0;
+        let mut value: usize = 0;
         if !self.byte.is_ascii_digit() {
             return Err(LoadError::FileFormat);
         }
         loop {
-            value *= 10;
+            value = value.checked_mul(10).ok_or(LoadError::FileFormat)?;
             value += (self.byte - b'0') as usize;
             if !self.eat()?.is_ascii_digit() {
                 return Ok(value);

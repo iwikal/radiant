@@ -287,6 +287,8 @@ pub fn load<R: BufRead>(mut reader: R) -> LoadResult<Image> {
     // Grab image dimensions
     let (width, height, mut reader) = dim_parser::parse_header(reader)?;
 
+    let length = width.checked_mul(height).ok_or(LoadError::FileFormat)?;
+
     // Allocate result buffer
     let mut data = vec![
         RGB {
@@ -294,7 +296,7 @@ pub fn load<R: BufRead>(mut reader: R) -> LoadResult<Image> {
             g: 0.0,
             b: 0.0,
         };
-        width * height
+        length
     ];
 
     // Decrunch image data
