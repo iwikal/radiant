@@ -222,8 +222,17 @@ fn decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult {
                 let mut bytes_left = code;
                 while bytes_left > 0 {
                     let buf = reader.fill_buf()?;
+
                     if buf.is_empty() {
-                        return Err(LoadError::Rle);
+                        #[cold]
+                        fn fail() -> LoadResult<()> {
+                            Err(LoadError::Eof(IoError::new(
+                                std::io::ErrorKind::UnexpectedEof,
+                                "failed to fill whole buffer",
+                            )))
+                        }
+
+                        return fail();
                     }
 
                     let count = buf.len().min(bytes_left);
