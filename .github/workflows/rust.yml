@@ -31,4 +31,4 @@ jobs:
         cargo install --force cargo-sync-readme
         rustup component add rustfmt
     - name: Check housekeeping
-      run: ./.cargo-husky/hooks/pre-push
+      run: sh '.cargo-husky/hooks/pre-push'
