@@ -287,10 +287,10 @@ const MAGIC: &[u8; 10] = b"#?RADIANCE";
 
 /// Load a Radiance HDR image from a reader that implements [`BufRead`].
 pub fn load<R: BufRead>(mut reader: R) -> LoadResult<Image> {
-    let mut buf = [0u8; MAGIC.len() + 1];
-    reader.read_exact(&mut buf[..])?;
+    let mut buf = [0u8; MAGIC.len()];
+    reader.read_exact(&mut buf)?;
 
-    if &buf[..MAGIC.len()] != MAGIC {
+    if &buf != MAGIC {
         return Err(LoadError::FileFormat);
     }
 
