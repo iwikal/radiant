@@ -203,47 +203,49 @@ fn decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult {
         return old_decrunch(reader, scanline);
     }
 
-    for element_index in 0..4 {
-        let mut pixel_index = 0;
-        while pixel_index < scanline.len() {
-            let mut write = |val: u8| -> LoadResult {
-                let pixel = scanline.get_mut(pixel_index).ok_or(LoadError::Rle)?;
-                match element_index {
-                    0 => pixel.r = val as f32,
-                    1 => pixel.g = val as f32,
-                    2 => pixel.b = val as f32,
-                    _ => pixel.apply_exposure(val),
-                }
-                pixel_index += 1;
-                Ok(())
-            };
-
-            let code = reader.read_byte()?;
+    let mut decrunch_channel = |mutate_pixel: fn(&mut RGB, u8)| {
+        let mut scanline = &mut scanline[..];
+        while !scanline.is_empty() {
+            let code = reader.read_byte()? as usize;
             if code > 128 {
                 // run
-                let run_len = code & 127;
+                let count = code & 127;
+                let pixels = scanline.get_mut(..count).ok_or(LoadError::Rle)?;
+
                 let val = reader.read_byte()?;
-                for _ in 0..run_len {
-                    write(val)?;
+                for pixel in pixels {
+                    mutate_pixel(pixel, val);
                 }
+                scanline = &mut scanline[count..];
             } else {
                 // non-run
-                let mut bytes_left = code as usize;
+                let mut bytes_left = code;
                 while bytes_left > 0 {
                     let buf = reader.fill_buf()?;
                     if buf.is_empty() {
                         return Err(LoadError::Rle);
                     }
+
                     let count = buf.len().min(bytes_left);
-                    for &val in &buf[..count] {
-                        write(val)?;
+                    let pixels = scanline.get_mut(..count).ok_or(LoadError::Rle)?;
+
+                    for (&val, pixel) in buf[..count].iter().zip(pixels) {
+                        mutate_pixel(pixel, val);
                     }
+                    scanline = &mut scanline[count..];
                     reader.consume(count);
                     bytes_left -= count;
                 }
             }
         }
-    }
+
+        Ok(())
+    };
+
+    decrunch_channel(|pixel, val| pixel.r = val as f32)?;
+    decrunch_channel(|pixel, val| pixel.g = val as f32)?;
+    decrunch_channel(|pixel, val| pixel.b = val as f32)?;
+    decrunch_channel(RGB::apply_exposure)?;
 
     Ok(())
 }
