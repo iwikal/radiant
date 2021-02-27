@@ -1,4 +1,4 @@
-use super::{LoadError, LoadResult, ReadByte};
+use super::{LoadError, LoadResult, ReadExt};
 use std::io::BufRead;
 
 const EOL: u8 = 0xA;

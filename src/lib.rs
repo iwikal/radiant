@@ -39,7 +39,7 @@
 //! Huge thanks to [HDRI Haven](https://hdrihaven.com) for providing CC0 sample images for testing!
 
 // Original source: http://flipcode.com/archives/HDR_Image_Reader.shtml
-use std::io::{BufRead, Error as IoError, ErrorKind, Read};
+use std::io::{BufRead, Error as IoError, ErrorKind};
 
 mod dim_parser;
 
@@ -95,10 +95,22 @@ impl std::convert::From<[u8; 4]> for RGBE {
     }
 }
 
+impl std::convert::From<RGBE> for [u8; 4] {
+    #[inline]
+    fn from(RGBE { r, g, b, e }: RGBE) -> Self {
+        [r, g, b, e]
+    }
+}
+
 impl RGBE {
     #[inline]
     fn is_rle_marker(&self) -> bool {
         self.r == 1 && self.g == 1 && self.b == 1
+    }
+
+    #[inline]
+    fn is_new_decrunch_marker(&self) -> bool {
+        self.r == 2 && self.g == 2 && self.b & 128 == 0
     }
 }
 
@@ -131,46 +143,48 @@ impl From<IoError> for LoadError {
 /// An alias for the type of results this crate returns.
 pub type LoadResult<T = ()> = Result<T, LoadError>;
 
-trait ReadByte {
+trait ReadExt {
     fn read_byte(&mut self) -> std::io::Result<u8>;
+    fn read_rgbe(&mut self) -> std::io::Result<RGBE>;
 }
 
-impl<R: BufRead> ReadByte for R {
+impl<R: BufRead> ReadExt for R {
     #[inline]
     fn read_byte(&mut self) -> std::io::Result<u8> {
         let mut buf = [0u8];
         self.read_exact(&mut buf)?;
         Ok(buf[0])
     }
+
+    #[inline]
+    fn read_rgbe(&mut self) -> std::io::Result<RGBE> {
+        let mut buf = [0u8; 4];
+        self.read_exact(&mut buf)?;
+        Ok(buf.into())
+    }
 }
 
-fn old_decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult {
-    let mut index = 0;
+fn old_decrunch<R: BufRead>(mut reader: R, mut scanline: &mut [RGB]) -> LoadResult {
     let mut r_shift = 0;
 
-    while index < scanline.len() {
-        let mut rgbe = [0u8; 4];
-        reader.read_exact(&mut rgbe)?;
-        let rgbe = RGBE::from(rgbe);
+    while scanline.len() > 1 {
+        let rgbe = reader.read_rgbe()?;
         if rgbe.is_rle_marker() {
             let count = usize::from(rgbe.e) << r_shift;
 
-            if index == 0 {
-                return Err(LoadError::Rle);
-            }
-            let from = scanline[index - 1].clone();
+            let from = scanline[0];
 
             scanline
-                .get_mut(index..(index + count))
+                .get_mut(1..=count)
                 .ok_or(LoadError::Rle)?
                 .iter_mut()
-                .for_each(|to| *to = from.clone());
+                .for_each(|to| *to = from);
 
-            index += count;
+            scanline = &mut scanline[count..];
             r_shift += 8;
         } else {
-            scanline[index] = rgbe.into();
-            index += 1;
+            scanline[1] = rgbe.into();
+            scanline = &mut scanline[1..];
             r_shift = 0;
         }
     }
@@ -182,26 +196,11 @@ fn decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult {
     const MIN_LEN: usize = 8;
     const MAX_LEN: usize = 0x7fff;
 
-    if scanline.len() < MIN_LEN || scanline.len() > MAX_LEN {
+    let rgbe = reader.read_rgbe()?;
+
+    if !(MIN_LEN..=MAX_LEN).contains(&scanline.len()) || !rgbe.is_new_decrunch_marker() {
+        scanline[0] = rgbe.into();
         return old_decrunch(reader, scanline);
-    }
-
-    let r = reader.read_byte()?;
-    if r != 2 {
-        let slice = &[r];
-        let c = std::io::Cursor::new(slice);
-        return old_decrunch(c.chain(reader), scanline);
-    }
-
-    let [g, b, e] = {
-        let mut buf = [0; 3];
-        reader.read_exact(&mut buf)?;
-        buf
-    };
-
-    if g != 2 || b & 128 != 0 {
-        scanline[0] = RGBE { r, g, b, e }.into();
-        return old_decrunch(reader, &mut scanline[1..]);
     }
 
     for element_index in 0..4 {
