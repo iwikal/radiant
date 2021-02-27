@@ -165,12 +165,14 @@ impl<R: BufRead> ReadExt for R {
 }
 
 fn old_decrunch<R: BufRead>(mut reader: R, mut scanline: &mut [RGB]) -> LoadResult {
-    let mut r_shift = 0;
+    let mut l_shift = 0;
 
     while scanline.len() > 1 {
         let rgbe = reader.read_rgbe()?;
         if rgbe.is_rle_marker() {
-            let count = usize::from(rgbe.e) << r_shift;
+            let count = usize::checked_shl(1, l_shift)
+                .and_then(|shift_factor| usize::from(rgbe.e).checked_mul(shift_factor))
+                .ok_or(LoadError::Rle)?;
 
             let from = scanline[0];
 
@@ -181,11 +183,11 @@ fn old_decrunch<R: BufRead>(mut reader: R, mut scanline: &mut [RGB]) -> LoadResu
                 .for_each(|to| *to = from);
 
             scanline = &mut scanline[count..];
-            r_shift += 8;
+            l_shift += 8;
         } else {
             scanline[1] = rgbe.into();
             scanline = &mut scanline[1..];
-            r_shift = 0;
+            l_shift = 0;
         }
     }
 
@@ -238,7 +240,7 @@ fn decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult {
                     let count = buf.len().min(bytes_left);
                     let pixels = scanline.get_mut(..count).ok_or(LoadError::Rle)?;
 
-                    for (&val, pixel) in buf[..count].iter().zip(pixels) {
+                    for (pixel, &val) in pixels.iter_mut().zip(&buf[..count]) {
                         mutate_pixel(pixel, val);
                     }
                     scanline = &mut scanline[count..];
@@ -309,11 +311,13 @@ pub fn load<R: BufRead>(mut reader: R) -> LoadResult<Image> {
         length
     ];
 
-    // Decrunch image data
-    for row in 0..height {
-        let start = row * width;
-        let end = start + width;
-        decrunch(&mut reader, &mut data[start..end])?;
+    if length > 0 {
+        // Decrunch image data
+        for row in 0..height {
+            let start = row * width;
+            let end = start + width;
+            decrunch(&mut reader, &mut data[start..end])?;
+        }
     }
 
     Ok(Image {
