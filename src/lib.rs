@@ -211,13 +211,15 @@ fn decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult {
             let code = reader.read_byte()? as usize;
             if code > 128 {
                 // run
-                let count = code & 127;
-                let pixels = scanline.get_mut(..count).ok_or(LoadError::Rle)?;
-
                 let val = reader.read_byte()?;
-                for pixel in pixels {
-                    mutate_pixel(pixel, val);
-                }
+
+                let count = code & 127;
+                scanline
+                    .get_mut(..count)
+                    .ok_or(LoadError::Rle)?
+                    .iter_mut()
+                    .for_each(|pixel| mutate_pixel(pixel, val));
+
                 scanline = &mut scanline[count..];
             } else {
                 // non-run
@@ -238,11 +240,13 @@ fn decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult {
                     }
 
                     let count = buf.len().min(bytes_left);
-                    let pixels = scanline.get_mut(..count).ok_or(LoadError::Rle)?;
+                    scanline
+                        .get_mut(..count)
+                        .ok_or(LoadError::Rle)?
+                        .iter_mut()
+                        .zip(buf)
+                        .for_each(|(pixel, &val)| mutate_pixel(pixel, val));
 
-                    for (pixel, &val) in pixels.iter_mut().zip(&buf[..count]) {
-                        mutate_pixel(pixel, val);
-                    }
                     scanline = &mut scanline[count..];
                     reader.consume(count);
                     bytes_left -= count;
