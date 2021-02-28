@@ -34,7 +34,7 @@ impl<R: BufRead> DimParser<R> {
 
         while self.byte != EOL {
             if !self.byte.is_ascii_whitespace() {
-                return Err(LoadError::FileFormat);
+                return Err(LoadError::HeaderError);
             }
             self.eat()?;
         }
@@ -46,7 +46,7 @@ impl<R: BufRead> DimParser<R> {
     fn eat_whitespace(&mut self) -> LoadResult {
         loop {
             if self.byte == EOL {
-                return Err(LoadError::FileFormat);
+                return Err(LoadError::HeaderError);
             } else if self.byte.is_ascii_whitespace() {
                 self.byte = self.reader.read_byte()?;
                 continue;
@@ -61,7 +61,7 @@ impl<R: BufRead> DimParser<R> {
         if self.byte.is_ascii_whitespace() {
             self.eat_whitespace()
         } else {
-            Err(LoadError::FileFormat)
+            Err(LoadError::HeaderError)
         }
     }
 
@@ -75,7 +75,7 @@ impl<R: BufRead> DimParser<R> {
             if self.byte == byte {
                 self.eat()?;
             } else {
-                return Err(LoadError::FileFormat);
+                return Err(LoadError::HeaderError);
             }
         }
         Ok(())
@@ -96,14 +96,14 @@ impl<R: BufRead> DimParser<R> {
     fn expect_usize(&mut self) -> LoadResult<usize> {
         let mut value: usize = 0;
         if !self.byte.is_ascii_digit() {
-            return Err(LoadError::FileFormat);
+            return Err(LoadError::HeaderError);
         }
         loop {
             value = value
                 .checked_mul(10)
-                .ok_or(LoadError::FileFormat)?
+                .ok_or(LoadError::HeaderError)?
                 .checked_add((self.byte - b'0') as usize)
-                .ok_or(LoadError::FileFormat)?;
+                .ok_or(LoadError::HeaderError)?;
             if !self.eat()?.is_ascii_digit() {
                 return Ok(value);
             }
@@ -113,7 +113,7 @@ impl<R: BufRead> DimParser<R> {
     fn expect_eol(&mut self) -> LoadResult {
         match self.byte {
             EOL => Ok(()),
-            _ => Err(LoadError::FileFormat),
+            _ => Err(LoadError::HeaderError),
         }
     }
 }

@@ -115,33 +115,38 @@ impl RGBE {
 }
 
 /// The various types of errors that can occur while loading an [`Image`].
-#[derive(thiserror::Error, Debug)]
-pub enum LoadError {
-    /// A lower level io error was raised.
-    #[error("io error: {0}")]
-    Io(#[source] IoError),
-    /// The image file ended unexpectedly.
-    #[error("file ended unexpectedly")]
-    Eof(#[source] IoError),
-    /// The file did not follow valid Radiance HDR format.
-    #[error("invalid file format")]
+#[derive(Debug)]
+enum LoadError {
+    Io(IoError),
     FileFormat,
-    /// The image file contained invalid run-length encoding.
-    #[error("invalid run-length encoding")]
+    HeaderError,
     Rle,
 }
 
 impl From<IoError> for LoadError {
     fn from(error: IoError) -> Self {
         match error.kind() {
-            ErrorKind::UnexpectedEof => Self::Eof(error),
+            kind @ErrorKind::UnexpectedEof => Self::Io(kind.into()),
             _ => Self::Io(error),
         }
     }
 }
 
+impl From<LoadError> for IoError {
+    fn from(error: LoadError) -> Self {
+        let msg = match error {
+            LoadError::Io(source) => return source,
+            LoadError::FileFormat => "the file is not a Radiance HDR image",
+            LoadError::HeaderError => "the image header is invalid",
+            LoadError::Rle => "the image contained invalid run-length encoding",
+        };
+
+        Self::new(ErrorKind::InvalidData, msg)
+    }
+}
+
 /// An alias for the type of results this crate returns.
-pub type LoadResult<T = ()> = Result<T, LoadError>;
+type LoadResult<T = ()> = Result<T, LoadError>;
 
 trait ReadExt {
     fn read_byte(&mut self) -> std::io::Result<u8>;
@@ -205,7 +210,7 @@ fn decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult {
         return old_decrunch(reader, scanline);
     }
 
-    let mut decrunch_channel = |mutate_pixel: fn(&mut RGB, u8)| {
+    let mut decrunch_channel = |mutate_pixel: fn(&mut RGB, u8)| -> LoadResult<()> {
         let mut scanline = &mut scanline[..];
         while !scanline.is_empty() {
             let code = reader.read_byte()? as usize;
@@ -228,15 +233,7 @@ fn decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult {
                     let buf = reader.fill_buf()?;
 
                     if buf.is_empty() {
-                        #[cold]
-                        fn fail() -> LoadResult<()> {
-                            Err(LoadError::Eof(IoError::new(
-                                std::io::ErrorKind::UnexpectedEof,
-                                "failed to fill whole buffer",
-                            )))
-                        }
-
-                        return fail();
+                        return Err(LoadError::Io(ErrorKind::UnexpectedEof.into()));
                     }
 
                     let count = buf.len().min(bytes_left);
@@ -292,18 +289,18 @@ impl Image {
 const MAGIC: &[u8; 10] = b"#?RADIANCE";
 
 /// Load a Radiance HDR image from a reader that implements [`BufRead`].
-pub fn load<R: BufRead>(mut reader: R) -> LoadResult<Image> {
+pub fn load<R: BufRead>(mut reader: R) -> Result<Image, IoError> {
     let mut buf = [0u8; MAGIC.len()];
-    reader.read_exact(&mut buf)?;
+    reader.read_exact(&mut buf).map_err(LoadError::from)?;
 
     if &buf != MAGIC {
-        return Err(LoadError::FileFormat);
+        Err(LoadError::FileFormat)?;
     }
 
     // Grab image dimensions
     let (width, height, mut reader) = dim_parser::parse_header(reader)?;
 
-    let length = width.checked_mul(height).ok_or(LoadError::FileFormat)?;
+    let length = width.checked_mul(height).ok_or(LoadError::HeaderError)?;
 
     // Allocate result buffer
     let mut data = vec![

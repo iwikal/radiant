@@ -19,9 +19,9 @@ fn map_channel(v: f32) -> u32 {
 
 fn main() -> anyhow::Result<()> {
     let options = Options::from_args();
-    let f = File::open(&options.image_path).context("Failed to open specified file")?;
+    let f = File::open(&options.image_path).context("failed to open specified file")?;
     let f = BufReader::new(f);
-    let image = radiant::load(f).context("Failed to load image data")?;
+    let image = radiant::load(f).context("failed to load image data")?;
 
     let buf: Vec<_> = image
         .data
@@ -39,10 +39,10 @@ fn main() -> anyhow::Result<()> {
 
     let title = format!("view_hdr: {}", options.image_path.to_string_lossy());
     let mut win = Window::new(&title, width, height, WindowOptions::default())
-        .context("Failed to create window")?;
+        .context("failed to create window")?;
 
     win.update_with_buffer(buf.as_slice(), width, height)
-        .context("Failed to render image")?;
+        .context("failed to render image")?;
 
     while win.is_open() && !win.is_key_down(Key::Escape) {
         win.update();
