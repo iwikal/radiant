@@ -119,14 +119,14 @@ impl RGBE {
 enum LoadError {
     Io(IoError),
     FileFormat,
-    HeaderError,
+    Header,
     Rle,
 }
 
 impl From<IoError> for LoadError {
     fn from(error: IoError) -> Self {
         match error.kind() {
-            kind @ErrorKind::UnexpectedEof => Self::Io(kind.into()),
+            kind @ ErrorKind::UnexpectedEof => Self::Io(kind.into()),
             _ => Self::Io(error),
         }
     }
@@ -137,7 +137,7 @@ impl From<LoadError> for IoError {
         let msg = match error {
             LoadError::Io(source) => return source,
             LoadError::FileFormat => "the file is not a Radiance HDR image",
-            LoadError::HeaderError => "the image header is invalid",
+            LoadError::Header => "the image header is invalid",
             LoadError::Rle => "the image contained invalid run-length encoding",
         };
 
@@ -300,7 +300,7 @@ pub fn load<R: BufRead>(mut reader: R) -> Result<Image, IoError> {
     // Grab image dimensions
     let (width, height, mut reader) = dim_parser::parse_header(reader)?;
 
-    let length = width.checked_mul(height).ok_or(LoadError::HeaderError)?;
+    let length = width.checked_mul(height).ok_or(LoadError::Header)?;
 
     // Allocate result buffer
     let mut data = vec![
