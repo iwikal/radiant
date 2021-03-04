@@ -56,6 +56,15 @@ pub struct RGB {
 }
 
 impl RGB {
+    /// Construct an RGB pixel with all channels set to zero, i.e. a black pixel.
+    pub const fn zero() -> Self {
+        Self {
+            r: 0.,
+            g: 0.,
+            b: 0.,
+        }
+    }
+
     #[inline]
     fn apply_exposure(&mut self, expo: u8) {
         let expo = i32::from(expo) - 128;
@@ -200,16 +209,24 @@ fn old_decrunch<R: BufRead>(mut reader: R, mut scanline: &mut [RGB]) -> LoadResu
 }
 
 fn decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult {
+    if scanline.is_empty() {
+        return Ok(());
+    }
+
     const MIN_LEN: usize = 8;
     const MAX_LEN: usize = 0x7fff;
 
     let rgbe = reader.read_rgbe()?;
 
-    if !(MIN_LEN..=MAX_LEN).contains(&scanline.len()) || !rgbe.is_new_decrunch_marker() {
+    if (MIN_LEN..=MAX_LEN).contains(&scanline.len()) && rgbe.is_new_decrunch_marker() {
+        new_decrunch(reader, scanline)
+    } else {
         scanline[0] = rgbe.into();
-        return old_decrunch(reader, scanline);
+        old_decrunch(reader, scanline)
     }
+}
 
+fn new_decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult {
     let mut decrunch_channel = |mutate_pixel: fn(&mut RGB, u8)| -> LoadResult<()> {
         let mut scanline = &mut scanline[..];
         while !scanline.is_empty() {
@@ -257,9 +274,7 @@ fn decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult {
     decrunch_channel(|pixel, val| pixel.r = val as f32)?;
     decrunch_channel(|pixel, val| pixel.g = val as f32)?;
     decrunch_channel(|pixel, val| pixel.b = val as f32)?;
-    decrunch_channel(RGB::apply_exposure)?;
-
-    Ok(())
+    decrunch_channel(RGB::apply_exposure)
 }
 
 /// A decoded Radiance HDR image.
@@ -288,37 +303,87 @@ impl Image {
 
 const MAGIC: &[u8; 10] = b"#?RADIANCE";
 
-/// Load a Radiance HDR image from a reader that implements [`BufRead`].
-pub fn load<R: BufRead>(mut reader: R) -> Result<Image, IoError> {
-    let mut buf = [0u8; MAGIC.len()];
-    reader.read_exact(&mut buf).map_err(LoadError::from)?;
+/// An image loader that decodes images line by line, through an iterative API.
+/// ```rust
+/// use radiant::{RGB, IterLoader};
+/// use std::io::BufReader;
+/// use std::fs::File;
+///
+/// let f = File::open("assets/colorful_studio_2k.hdr").expect("failed to open file");
+/// let f = BufReader::new(f);
+/// let mut loader = IterLoader::new(f).expect("failed to read image");
+/// let mut buffer = vec![RGB::zero(); loader.width];
+/// for y in 0..loader.height {
+///     loader.read_scanline(&mut buffer).expect("failed to read image");
+///     // do something with the decoded scanline, such as uploading it to a GPU texture
+/// }
+/// ```
+pub struct IterLoader<R> {
+    /// The width of the image.
+    pub width: usize,
+    /// The height of the image, i.e. the number of scanlines.
+    pub height: usize,
+    reader: R,
+}
 
-    if &buf != MAGIC {
-        Err(LoadError::FileFormat)?;
+impl<R: BufRead> IterLoader<R> {
+    /// Construct a new [`IterLoader`]. This will consume the header from the provided reader.
+    pub fn new(mut reader: R) -> Result<Self, IoError> {
+        let mut buf = [0u8; MAGIC.len()];
+        reader.read_exact(&mut buf).map_err(LoadError::from)?;
+
+        if &buf != MAGIC {
+            Err(LoadError::FileFormat)?;
+        }
+
+        // Grab image dimensions
+        let (width, height, reader) = dim_parser::parse_header(reader)?;
+
+        Ok(Self {
+            width,
+            height,
+            reader,
+        })
     }
 
-    // Grab image dimensions
-    let (width, height, mut reader) = dim_parser::parse_header(reader)?;
+    /// Decode image data into the next horizontal scanline of the image. The provided scanline
+    /// buffer must be at least as long as the width of the image, otherwise an error of the kind
+    /// [`std::io::ErrorKind::InvalidInput`] will be returned.
+    pub fn read_scanline(&mut self, scanline: &mut [RGB]) -> Result<(), IoError> {
+        let scanline = scanline
+            .get_mut(..self.width)
+            .ok_or_else(Self::invalid_input)?;
+        decrunch(&mut self.reader, scanline)?;
+        Ok(())
+    }
+
+    fn invalid_input() -> IoError {
+        IoError::new(
+            ErrorKind::InvalidInput,
+            "image width exceeded length of provided buffer",
+        )
+    }
+
+    /// The inner reader is not guaranteed to be empty when the image is completely decoded.
+    /// This function can be used to retrieve the inner reader.
+    pub fn into_inner_reader(self) -> R {
+        self.reader
+    }
+}
+
+/// Load a Radiance HDR image from a reader that implements [`BufRead`].
+pub fn load<R: BufRead>(reader: R) -> Result<Image, IoError> {
+    let mut loader = IterLoader::new(reader)?;
+    let width = loader.width;
+    let height = loader.height;
 
     let length = width.checked_mul(height).ok_or(LoadError::Header)?;
 
-    // Allocate result buffer
-    let mut data = vec![
-        RGB {
-            r: 0.0,
-            g: 0.0,
-            b: 0.0,
-        };
-        length
-    ];
+    let mut data = vec![RGB::zero(); length];
 
-    if length > 0 {
-        // Decrunch image data
-        for row in 0..height {
-            let start = row * width;
-            let end = start + width;
-            decrunch(&mut reader, &mut data[start..end])?;
-        }
+    for row in 0..height {
+        let start = row * width;
+        loader.read_scanline(&mut data[start..])?;
     }
 
     Ok(Image {
