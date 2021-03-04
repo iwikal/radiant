@@ -46,7 +46,7 @@ mod dim_parser;
 /// The decoded R, G, and B value of a pixel. You typically get these from the data field on an
 /// [`Image`].
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct RGB {
+pub struct Rgb {
     /// The red channel.
     pub r: f32,
     /// The green channel.
@@ -55,8 +55,8 @@ pub struct RGB {
     pub b: f32,
 }
 
-impl RGB {
-    /// Construct an RGB pixel with all channels set to zero, i.e. a black pixel.
+impl Rgb {
+    /// Construct an Rgb pixel with all channels set to zero, i.e. a black pixel.
     pub const fn zero() -> Self {
         Self {
             r: 0.,
@@ -77,16 +77,16 @@ impl RGB {
 }
 
 #[derive(Debug, Clone)]
-struct RGBE {
+struct Rgbe {
     r: u8,
     g: u8,
     b: u8,
     e: u8,
 }
 
-impl std::convert::From<RGBE> for RGB {
+impl std::convert::From<Rgbe> for Rgb {
     #[inline]
-    fn from(rgbe: RGBE) -> Self {
+    fn from(rgbe: Rgbe) -> Self {
         let mut rgb = Self {
             r: rgbe.r as f32,
             g: rgbe.g as f32,
@@ -97,21 +97,21 @@ impl std::convert::From<RGBE> for RGB {
     }
 }
 
-impl std::convert::From<[u8; 4]> for RGBE {
+impl std::convert::From<[u8; 4]> for Rgbe {
     #[inline]
     fn from([r, g, b, e]: [u8; 4]) -> Self {
         Self { r, g, b, e }
     }
 }
 
-impl std::convert::From<RGBE> for [u8; 4] {
+impl std::convert::From<Rgbe> for [u8; 4] {
     #[inline]
-    fn from(RGBE { r, g, b, e }: RGBE) -> Self {
+    fn from(Rgbe { r, g, b, e }: Rgbe) -> Self {
         [r, g, b, e]
     }
 }
 
-impl RGBE {
+impl Rgbe {
     #[inline]
     fn is_rle_marker(&self) -> bool {
         self.r == 1 && self.g == 1 && self.b == 1
@@ -159,7 +159,7 @@ type LoadResult<T = ()> = Result<T, LoadError>;
 
 trait ReadExt {
     fn read_byte(&mut self) -> std::io::Result<u8>;
-    fn read_rgbe(&mut self) -> std::io::Result<RGBE>;
+    fn read_rgbe(&mut self) -> std::io::Result<Rgbe>;
 }
 
 impl<R: BufRead> ReadExt for R {
@@ -171,14 +171,14 @@ impl<R: BufRead> ReadExt for R {
     }
 
     #[inline]
-    fn read_rgbe(&mut self) -> std::io::Result<RGBE> {
+    fn read_rgbe(&mut self) -> std::io::Result<Rgbe> {
         let mut buf = [0u8; 4];
         self.read_exact(&mut buf)?;
         Ok(buf.into())
     }
 }
 
-fn old_decrunch<R: BufRead>(mut reader: R, mut scanline: &mut [RGB]) -> LoadResult {
+fn old_decrunch<R: BufRead>(mut reader: R, mut scanline: &mut [Rgb]) -> LoadResult {
     let mut l_shift = 0;
 
     while scanline.len() > 1 {
@@ -208,7 +208,7 @@ fn old_decrunch<R: BufRead>(mut reader: R, mut scanline: &mut [RGB]) -> LoadResu
     Ok(())
 }
 
-fn decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult {
+fn decrunch<R: BufRead>(mut reader: R, scanline: &mut [Rgb]) -> LoadResult {
     if scanline.is_empty() {
         return Ok(());
     }
@@ -226,8 +226,8 @@ fn decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult {
     }
 }
 
-fn new_decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult {
-    let mut decrunch_channel = |mutate_pixel: fn(&mut RGB, u8)| -> LoadResult<()> {
+fn new_decrunch<R: BufRead>(mut reader: R, scanline: &mut [Rgb]) -> LoadResult {
+    let mut decrunch_channel = |mutate_pixel: fn(&mut Rgb, u8)| -> LoadResult<()> {
         let mut scanline = &mut scanline[..];
         while !scanline.is_empty() {
             let code = reader.read_byte()? as usize;
@@ -274,7 +274,7 @@ fn new_decrunch<R: BufRead>(mut reader: R, scanline: &mut [RGB]) -> LoadResult {
     decrunch_channel(|pixel, val| pixel.r = val as f32)?;
     decrunch_channel(|pixel, val| pixel.g = val as f32)?;
     decrunch_channel(|pixel, val| pixel.b = val as f32)?;
-    decrunch_channel(RGB::apply_exposure)
+    decrunch_channel(Rgb::apply_exposure)
 }
 
 /// A decoded Radiance HDR image.
@@ -285,7 +285,7 @@ pub struct Image {
     /// The height of the image, in pixels.
     pub height: usize,
     /// The decoded image data.
-    pub data: Vec<RGB>,
+    pub data: Vec<Rgb>,
 }
 
 impl Image {
@@ -295,7 +295,7 @@ impl Image {
     }
 
     /// Get a pixel at a specific x and y coordinate. Will panic if out of bounds.
-    pub fn pixel(&self, x: usize, y: usize) -> &RGB {
+    pub fn pixel(&self, x: usize, y: usize) -> &Rgb {
         let offset = self.pixel_offset(x, y);
         &self.data[offset]
     }
@@ -305,14 +305,14 @@ const MAGIC: &[u8; 10] = b"#?RADIANCE";
 
 /// An image loader that decodes images line by line, through an iterative API.
 /// ```rust
-/// use radiant::{RGB, IterLoader};
+/// use radiant::{Rgb, IterLoader};
 /// use std::io::BufReader;
 /// use std::fs::File;
 ///
 /// let f = File::open("assets/colorful_studio_2k.hdr").expect("failed to open file");
 /// let f = BufReader::new(f);
 /// let mut loader = IterLoader::new(f).expect("failed to read image");
-/// let mut buffer = vec![RGB::zero(); loader.width];
+/// let mut buffer = vec![Rgb::zero(); loader.width];
 /// for y in 0..loader.height {
 ///     loader.read_scanline(&mut buffer).expect("failed to read image");
 ///     // do something with the decoded scanline, such as uploading it to a GPU texture
@@ -349,7 +349,7 @@ impl<R: BufRead> IterLoader<R> {
     /// Decode image data into the next horizontal scanline of the image. The provided scanline
     /// buffer must be at least as long as the width of the image, otherwise an error of the kind
     /// [`std::io::ErrorKind::InvalidInput`] will be returned.
-    pub fn read_scanline(&mut self, scanline: &mut [RGB]) -> Result<(), IoError> {
+    pub fn read_scanline(&mut self, scanline: &mut [Rgb]) -> Result<(), IoError> {
         let scanline = scanline
             .get_mut(..self.width)
             .ok_or_else(Self::invalid_input)?;
@@ -379,7 +379,7 @@ pub fn load<R: BufRead>(reader: R) -> Result<Image, IoError> {
 
     let length = width.checked_mul(height).ok_or(LoadError::Header)?;
 
-    let mut data = vec![RGB::zero(); length];
+    let mut data = vec![Rgb::zero(); length];
 
     for row in 0..height {
         let start = row * width;

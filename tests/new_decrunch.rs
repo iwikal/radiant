@@ -1,4 +1,4 @@
-use radiant::RGB;
+use radiant::Rgb;
 use std::io::Read;
 
 #[test]
@@ -11,7 +11,7 @@ fn new_decrunch_rle() {
     assert_eq!(image.height, 1);
     assert_eq!(
         &image.data,
-        &[RGB {
+        &[Rgb {
             r: 1.0,
             g: 0.0,
             b: 1.0,
@@ -29,7 +29,7 @@ fn new_decrunch_zero_length_run() {
     assert_eq!(image.height, 1);
     assert_eq!(
         &image.data,
-        &[RGB {
+        &[Rgb {
             r: 1.0,
             g: 0.0,
             b: 1.0,

@@ -1,4 +1,4 @@
-use radiant::RGB;
+use radiant::Rgb;
 
 #[test]
 fn old_decrunch_trivial() {
@@ -8,7 +8,7 @@ fn old_decrunch_trivial() {
     assert_eq!(image.height, 1);
     assert_eq!(
         &image.data,
-        &[RGB {
+        &[Rgb {
             r: 1.0,
             g: 0.0,
             b: 1.0,
@@ -25,12 +25,12 @@ fn old_decrunch_rle() {
     assert_eq!(
         &image.data,
         &[
-            RGB {
+            Rgb {
                 r: 1.0,
                 g: 0.0,
                 b: 1.0,
             },
-            RGB {
+            Rgb {
                 r: 1.0,
                 g: 0.0,
                 b: 1.0,
@@ -50,22 +50,22 @@ fn old_decrunch_rle_two_scanlines() {
     assert_eq!(
         &image.data,
         &[
-            RGB {
+            Rgb {
                 r: 1.0,
                 g: 0.0,
                 b: 1.0,
             },
-            RGB {
+            Rgb {
                 r: 1.0,
                 g: 0.0,
                 b: 1.0,
             },
-            RGB {
+            Rgb {
                 r: 0.0,
                 g: 1.0,
                 b: 0.0,
             },
-            RGB {
+            Rgb {
                 r: 0.0,
                 g: 1.0,
                 b: 0.0,
@@ -82,7 +82,7 @@ fn old_decrunch_zero_length_run() {
     assert_eq!(image.height, 1);
     assert_eq!(
         &image.data,
-        &[RGB {
+        &[Rgb {
             r: 1.0,
             g: 0.0,
             b: 1.0,
