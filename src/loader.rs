@@ -1,5 +1,7 @@
-use crate::{dim_parser, Image, LoadError, LoadResult, ReadExt, Rgb};
+use crate::{Image, LoadError, LoadResult, ReadExt, Rgb};
 use std::io::{BufRead, Error as IoError, ErrorKind};
+
+mod header;
 
 const MAGIC: &[u8; 10] = b"#?RADIANCE";
 
@@ -23,7 +25,7 @@ impl<R: BufRead> Loader<R> {
         }
 
         // Grab image dimensions
-        let (width, height, reader) = dim_parser::parse_header(reader)?;
+        let (width, height, reader) = header::parse_header(reader)?;
 
         Ok(Self {
             width,

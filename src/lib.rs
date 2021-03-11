@@ -41,7 +41,6 @@
 // Original source: http://flipcode.com/archives/HDR_Image_Reader.shtml
 use std::io::{BufRead, Error as IoError, ErrorKind};
 
-mod dim_parser;
 mod loader;
 
 pub use loader::*;

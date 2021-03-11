@@ -27,41 +27,28 @@ impl<R: BufRead> DimParser<R> {
     }
 
     fn parse(mut self) -> LoadResult<(usize, usize, R)> {
-        self.eat_whitespace()?;
+        self.eat_spaces()?;
         let y = self.expect_y()?;
-        self.expect_whitespace()?;
+        self.expect_spaces()?;
         let x = self.expect_x()?;
-
-        while self.byte != EOL {
-            if !self.byte.is_ascii_whitespace() {
-                return Err(LoadError::Header);
-            }
-            self.eat()?;
-        }
-
+        self.eat_spaces()?;
         self.expect_eol()?;
         Ok((x, y, self.reader))
     }
 
-    fn eat_whitespace(&mut self) -> LoadResult {
-        loop {
-            if self.byte == EOL {
-                return Err(LoadError::Header);
-            } else if self.byte.is_ascii_whitespace() {
-                self.byte = self.reader.read_byte()?;
-                continue;
-            } else {
-                break;
-            }
+    fn eat_spaces(&mut self) -> LoadResult<bool> {
+        let mut ate_any = false;
+        while self.byte == b' ' {
+            ate_any = true;
+            self.eat()?;
         }
-        Ok(())
+        Ok(ate_any)
     }
 
-    fn expect_whitespace(&mut self) -> LoadResult {
-        if self.byte.is_ascii_whitespace() {
-            self.eat_whitespace()
-        } else {
-            Err(LoadError::Header)
+    fn expect_spaces(&mut self) -> LoadResult {
+        match self.eat_spaces()? {
+            true => Ok(()),
+            false => Err(LoadError::Header),
         }
     }
 
@@ -83,13 +70,13 @@ impl<R: BufRead> DimParser<R> {
 
     fn expect_y(&mut self) -> LoadResult<usize> {
         self.expect(b"-Y")?;
-        self.expect_whitespace()?;
+        self.expect_spaces()?;
         self.expect_usize()
     }
 
     fn expect_x(&mut self) -> LoadResult<usize> {
         self.expect(b"+X")?;
-        self.expect_whitespace()?;
+        self.expect_spaces()?;
         self.expect_usize()
     }
 
