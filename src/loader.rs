@@ -1,5 +1,5 @@
+use crate::{dim_parser, Image, LoadError, LoadResult, ReadExt, Rgb};
 use std::io::{BufRead, Error as IoError, ErrorKind};
-use crate::{LoadResult, LoadError, dim_parser, Rgb, ReadExt, Image};
 
 const MAGIC: &[u8; 10] = b"#?RADIANCE";
 
@@ -32,18 +32,12 @@ impl<R: BufRead> Loader<R> {
         })
     }
 
-    /// Convert this loader into an [`IterLoader`], which lets you load the image one scanline at a time.
-    pub fn iter_loader(self) -> IterLoader<R> {
-        let Self {
-            width,
-            height,
-            reader,
-        } = self;
-
-        IterLoader {
-            width,
-            height,
-            reader,
+    /// Convert this loader into an [`ScanlinesLoader`], which lets you load the image one scanline at a time.
+    pub fn scanlines(self) -> ScanlinesLoader<R> {
+        ScanlinesLoader {
+            width: self.width,
+            height: self.height,
+            reader: self.reader,
         }
     }
 
@@ -55,11 +49,11 @@ impl<R: BufRead> Loader<R> {
         let mut data = vec![Rgb::zero(); length];
 
         if length != 0 {
-            let mut iter_loader = self.iter_loader();
+            let mut scanlines = self.scanlines();
 
             for y in 0..height {
                 let start = y * width;
-                iter_loader.read_scanline(&mut data[start..])?;
+                scanlines.read_scanline(&mut data[start..])?;
             }
         }
 
@@ -81,17 +75,21 @@ impl<R: BufRead> Loader<R> {
 /// let f = BufReader::new(f);
 /// let mut loader = Loader::new(f)
 ///     .expect("failed to read image")
-///     .iter_loader();
+///     .scanlines();
 /// let height = loader.height;
 /// let width = loader.width;
 ///
+/// // Allocate a buffer that fits one whole scanline (or more)
 /// let mut buffer = vec![Rgb::zero(); width];
 /// for y in 0..height {
 ///     loader.read_scanline(&mut buffer).expect("failed to read image");
 ///     // do something with the decoded scanline, such as uploading it to a GPU texture
 /// }
+///
+/// // You can use the bytemuck crate to cast the buffer to another plain-old-data type
+/// let buffer: &[[f32; 3]] = bytemuck::cast_slice(&buffer);
 /// ```
-pub struct IterLoader<R> {
+pub struct ScanlinesLoader<R> {
     /// The width of the image.
     pub width: usize,
     /// The height of the image, i.e. the number of scanlines.
@@ -99,12 +97,11 @@ pub struct IterLoader<R> {
     reader: R,
 }
 
-impl<R: BufRead> IterLoader<R> {
+impl<R: BufRead> ScanlinesLoader<R> {
     /// Decode image data into the next horizontal scanline of the image. The provided scanline
     /// buffer must be at least as long as the width of the image, otherwise an error of the kind
-    /// [`std::io::ErrorKind::InvalidInput`] will be returned. If successful, returns the written
-    /// image data as a slice of `f32`s.
-    pub fn read_scanline<'a>(&mut self, scanline: &'a mut [Rgb]) -> Result<&'a [f32], IoError> {
+    /// [`std::io::ErrorKind::InvalidInput`] will be returned.
+    pub fn read_scanline(&mut self, scanline: &mut [Rgb]) -> Result<(), IoError> {
         let scanline = scanline
             .get_mut(..self.width)
             .ok_or_else(Self::invalid_input)?;
@@ -123,18 +120,7 @@ impl<R: BufRead> IterLoader<R> {
             }
         }
 
-        let result = unsafe {
-            let ptr = scanline.as_ptr();
-            let len = scanline.len();
-
-            // Drop this mutable borrow before creating a new reference to the same data
-            drop(scanline);
-
-            const SCALE: usize = std::mem::size_of::<Rgb>() / std::mem::size_of::<f32>();
-            std::slice::from_raw_parts(ptr as *const f32, len * SCALE)
-        };
-
-        Ok(result)
+        Ok(())
     }
 
     fn invalid_input() -> IoError {
@@ -198,7 +184,7 @@ impl<R: BufRead> IterLoader<R> {
                         let buf = self.reader.fill_buf()?;
 
                         if buf.is_empty() {
-                            return Err(LoadError::Io(ErrorKind::UnexpectedEof.into()));
+                            return Err(LoadError::Eof);
                         }
 
                         let count = buf.len().min(bytes_left);
@@ -223,5 +209,29 @@ impl<R: BufRead> IterLoader<R> {
         decrunch_channel(|pixel, val| pixel.g = val as f32)?;
         decrunch_channel(|pixel, val| pixel.b = val as f32)?;
         decrunch_channel(Rgb::apply_exposure)
+    }
+}
+
+struct ScanlinesIter<R> {
+    loader: ScanlinesLoader<R>,
+}
+
+impl<R: BufRead> Iterator for ScanlinesIter<R> {
+    type Item = Result<Vec<Rgb>, IoError>;
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.loader.height {
+            0 => None,
+            _ => Some({
+                self.loader.height -= 1;
+                let mut buf = vec![Rgb::zero(); self.loader.width];
+                match self.loader.read_scanline(&mut buf) {
+                    Ok(_) => Ok(buf),
+                    Err(e) => {
+                        self.loader.height = 0;
+                        Err(e)
+                    }
+                }
+            }),
+        }
     }
 }

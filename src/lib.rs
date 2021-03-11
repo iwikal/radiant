@@ -134,6 +134,7 @@ impl Rgbe {
 #[derive(Debug)]
 enum LoadError {
     Io(IoError),
+    Eof,
     FileFormat,
     Header,
     Rle,
@@ -142,7 +143,7 @@ enum LoadError {
 impl From<IoError> for LoadError {
     fn from(error: IoError) -> Self {
         match error.kind() {
-            kind @ ErrorKind::UnexpectedEof => Self::Io(kind.into()),
+            ErrorKind::UnexpectedEof => Self::Eof,
             _ => Self::Io(error),
         }
     }
@@ -152,6 +153,7 @@ impl From<LoadError> for IoError {
     fn from(error: LoadError) -> Self {
         let msg = match error {
             LoadError::Io(source) => return source,
+            LoadError::Eof => return ErrorKind::UnexpectedEof.into(),
             LoadError::FileFormat => "the file is not a Radiance HDR image",
             LoadError::Header => "the image header is invalid",
             LoadError::Rle => "the image contained invalid run-length encoding",
