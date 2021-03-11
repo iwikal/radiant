@@ -49,6 +49,7 @@ pub use loader::*;
 /// The decoded R, G, and B value of a pixel. You typically get these from the data field on an
 /// [`Image`].
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(C)]
 pub struct Rgb {
     /// The red channel.
     pub r: f32,
@@ -57,6 +58,9 @@ pub struct Rgb {
     /// The blue channel.
     pub b: f32,
 }
+
+unsafe impl bytemuck::Zeroable for Rgb {}
+unsafe impl bytemuck::Pod for Rgb {}
 
 impl Rgb {
     /// Construct an Rgb pixel with all channels set to zero, i.e. a black pixel.
