@@ -45,6 +45,7 @@ mod dim_parser;
 
 /// The decoded R, G, and B value of a pixel. You typically get these from the data field on an
 /// [`Image`].
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RGB {
     /// The red channel.
