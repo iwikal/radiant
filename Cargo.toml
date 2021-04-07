@@ -12,8 +12,9 @@ readme = "README.md"
 edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[dependencies]
-bytemuck = "1.5.1"
+[dependencies.bytemuck]
+version = "1.5.1"
+optional = true
 
 [dev-dependencies]
 structopt = "0.2"
@@ -23,3 +24,6 @@ anyhow = "1"
 [dev-dependencies.cargo-husky]
 version = "1.5"
 features = ["run-cargo-fmt", "run-cargo-clippy", "user-hooks"]
+
+[features]
+impl-bytemuck = ["bytemuck"]

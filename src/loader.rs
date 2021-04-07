@@ -88,7 +88,10 @@ impl<R: BufRead> Loader<R> {
 ///     // do something with the decoded scanline, such as uploading it to a GPU texture
 /// }
 ///
-/// // You can use the bytemuck crate to cast the buffer to another plain-old-data type
+/// // If you enable the "impl-bytemuck" feature,
+/// // you can use the bytemuck crate to cast the buffer to another plain-old-data type.
+/// // This layout is guaranteed, so you can also do this using `unsafe`.
+/// # #[cfg(feature = "impl-bytemuck")]
 /// let buffer: &[[f32; 3]] = bytemuck::cast_slice(&buffer);
 /// ```
 pub struct ScanlinesLoader<R> {

@@ -58,7 +58,9 @@ pub struct Rgb {
     pub b: f32,
 }
 
+#[cfg(feature = "bytemuck")]
 unsafe impl bytemuck::Zeroable for Rgb {}
+#[cfg(feature = "bytemuck")]
 unsafe impl bytemuck::Pod for Rgb {}
 
 impl Rgb {
